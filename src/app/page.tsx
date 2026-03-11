@@ -513,7 +513,7 @@ export default function BudgetApp() {
     queryFn: () => fetchData<Summary>(`/api/summary?month=${currentMonth}`),
   });
 
-  // Initialize app
+  // Initialize app and check session
   useEffect(() => {
     const initApp = async () => {
       try {
@@ -523,7 +523,43 @@ export default function BudgetApp() {
       }
     };
     initApp();
+
+    // Check for existing session
+    const session = localStorage.getItem('budget_session');
+    if (session) {
+      try {
+        const sessionData = JSON.parse(session);
+        // Session expires after 7 days
+        const sessionAge = Date.now() - sessionData.timestamp;
+        const sevenDays = 7 * 24 * 60 * 60 * 1000;
+        if (sessionAge < sevenDays) {
+          // Use setTimeout to avoid setState directly in effect
+          setTimeout(() => setPinVerified(true), 0);
+        } else {
+          localStorage.removeItem('budget_session');
+        }
+      } catch {
+        localStorage.removeItem('budget_session');
+      }
+    }
   }, []);
+
+  // Logout function
+  const handleLogout = useCallback(() => {
+    localStorage.removeItem('budget_session');
+    setPinVerified(false);
+    setPin('');
+    showToast('Logged out successfully');
+  }, [showToast]);
+
+  // Save session on successful verification
+  useEffect(() => {
+    if (pinVerified) {
+      localStorage.setItem('budget_session', JSON.stringify({
+        timestamp: Date.now(),
+      }));
+    }
+  }, [pinVerified]);
 
   // PIN status - derived from settings
   const hasPinSet = useMemo(() => !!settings?.pin, [settings?.pin]);
@@ -1487,19 +1523,32 @@ export default function BudgetApp() {
                         <button
                           onClick={() => {
                             const newValue = !settings?.biometricEnabled;
-                            updateSettings.mutate({ 
-                              biometricEnabled: newValue 
+                            updateSettings.mutate({
+                              biometricEnabled: newValue
                             });
                           }}
                           className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition-colors ${
-                            settings?.biometricEnabled 
-                              ? 'bg-green-100 text-green-600' 
+                            settings?.biometricEnabled
+                              ? 'bg-green-100 text-green-600'
                               : 'bg-slate-200 text-slate-600 hover:bg-slate-300'
                           }`}
                         >
                           {settings?.biometricEnabled ? '✓ On' : 'Off'}
                         </button>
                       </div>
+                    )}
+
+                    {/* Logout Button - only show if PIN is set and logged in */}
+                    {hasPinSet && pinVerified && (
+                      <button
+                        onClick={handleLogout}
+                        className="w-full flex items-center justify-center gap-2 p-3 rounded-xl bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 text-red-600 font-semibold mt-2"
+                      >
+                        <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
+                          <path d="M17 7l-1.41 1.41L18.17 11H8v2h10.17l-2.58 2.58L17 17l5-5zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4V5z"/>
+                        </svg>
+                        Logout
+                      </button>
                     )}
                   </div>
                   
