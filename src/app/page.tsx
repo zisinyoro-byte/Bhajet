@@ -2267,8 +2267,16 @@ export default function BudgetApp() {
             <svg className="w-6 h-6" viewBox="0 0 24 24" fill="currentColor"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
             <span className="text-xs">List</span>
           </button>
+          <button onClick={() => setView('budgets')} className={`flex flex-col items-center gap-0.5 ${view === 'budgets' ? 'text-blue-600' : 'text-muted-foreground'}`}>
+            <svg className="w-6 h-6" viewBox="0 0 24 24" fill="currentColor"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM9 17H7v-7h2v7zm4 0h-2V7h2v10zm4 0h-2v-4h2v4z"/></svg>
+            <span className="text-xs">Budget</span>
+          </button>
           <button onClick={() => { resetTxForm(); setView('add'); }} className="w-14 h-14 bg-blue-600 rounded-full flex items-center justify-center text-white shadow-lg -translate-y-5 border-4 border-background">
             <svg className="w-7 h-7" viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+          </button>
+          <button onClick={() => setView('goals')} className={`flex flex-col items-center gap-0.5 ${view === 'goals' ? 'text-blue-600' : 'text-muted-foreground'}`}>
+            <svg className="w-6 h-6" viewBox="0 0 24 24" fill="currentColor"><path d="M16 6l2.29 2.29-4.88 4.88-4-4L2 12.59 3.41 14l6 6 10-10z"/></svg>
+            <span className="text-xs">Goals</span>
           </button>
           <button onClick={() => setView('analysis')} className={`flex flex-col items-center gap-0.5 ${view === 'analysis' ? 'text-blue-600' : 'text-muted-foreground'}`}>
             <svg className="w-6 h-6" viewBox="0 0 24 24" fill="currentColor"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM9 17H7v-7h2v7zm4 0h-2V7h2v10zm4 0h-2v-4h2v4z"/></svg>
