@@ -513,6 +513,16 @@ export default function BudgetApp() {
     queryFn: () => fetchData<Summary>(`/api/summary?month=${currentMonth}`),
   });
 
+  // Analysis query - for comprehensive analytics
+  const { data: analysisData, isLoading: analysisLoading } = useQuery({
+    queryKey: ['analysis', analysisPeriod],
+    queryFn: async () => {
+      const res = await fetch(`/api/analysis?period=${analysisPeriod}`);
+      if (!res.ok) throw new Error('Failed to fetch analysis');
+      return res.json();
+    },
+  });
+
   // Initialize app and check session
   useEffect(() => {
     const initApp = async () => {
@@ -646,32 +656,6 @@ export default function BudgetApp() {
     const cat = categories.find(c => c.name === name);
     return cat?.icon || DEFAULT_ICONS[name] || '📄';
   }, [categories]);
-
-  // Analysis calculation
-  const analysisData = useMemo(() => {
-    const now = new Date();
-    const filtered = transactions.filter((t) => {
-      if (t.type !== 'expenditure') return false;
-      if (analysisPeriod === 'month') {
-        return new Date(t.date).getMonth() === now.getMonth() &&
-               new Date(t.date).getFullYear() === now.getFullYear();
-      }
-      if (analysisPeriod === '3months') {
-        const txDate = new Date(t.date);
-        const diffDays = (now.getTime() - txDate.getTime()) / (1000 * 60 * 60 * 24);
-        return diffDays <= 90;
-      }
-      return true;
-    });
-
-    const spending: Record<string, number> = {};
-    filtered.forEach((t) => {
-      spending[t.category] = (spending[t.category] || 0) + t.amount;
-    });
-    return spending;
-  }, [transactions, analysisPeriod]);
-
-  const maxSpending = Math.max(...Object.values(analysisData), 1);
 
   // Helpers
   const handleEditTx = useCallback((tx: Transaction) => {
@@ -1430,38 +1414,296 @@ export default function BudgetApp() {
             </div>
           )}
 
-          {/* Settings View */}
-          {view === 'settings' && (
+          {/* Analysis View */}
+          {view === 'analysis' && (
             <div className="animate-fadeIn">
-              <h2 className="text-lg font-bold mb-3">Analysis</h2>
-              <div className="bg-card rounded-2xl p-4 border shadow-sm mb-4">
-                <div className="flex justify-between items-center mb-4">
-                  <span className="text-sm text-muted-foreground">Period:</span>
-                  <select value={analysisPeriod} onChange={(e) => setAnalysisPeriod(e.target.value)} className="p-2 rounded-lg bg-muted border outline-none text-sm">
-                    <option value="all">All Time</option>
-                    <option value="month">This Month</option>
-                    <option value="3months">Last 3 Months</option>
-                  </select>
+              <div className="flex justify-between items-center mb-4">
+                <h2 className="text-lg font-bold">📊 Financial Analysis</h2>
+                <select
+                  value={analysisPeriod}
+                  onChange={(e) => setAnalysisPeriod(e.target.value)}
+                  className="p-2 rounded-lg bg-muted border outline-none text-sm"
+                >
+                  <option value="week">This Week</option>
+                  <option value="month">This Month</option>
+                  <option value="3months">Last 3 Months</option>
+                  <option value="year">This Year</option>
+                  <option value="all">All Time</option>
+                </select>
+              </div>
+
+              {/* Summary Cards */}
+              <div className="grid grid-cols-2 gap-3 mb-4">
+                <div className="bg-green-50 dark:bg-green-950 rounded-2xl p-4 border border-green-200 dark:border-green-800">
+                  <div className="text-xs text-muted-foreground">Total Income</div>
+                  <div className="text-xl font-bold text-green-600">{formatCurrency(analysisData?.totals?.income || 0)}</div>
+                  {analysisData?.comparison && (
+                    <div className={`text-xs mt-1 ${analysisData.comparison.incomeChange >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+                      {analysisData.comparison.incomeChange >= 0 ? '↑' : '↓'} {Math.abs(analysisData.comparison.incomeChange).toFixed(1)}% vs prev
+                    </div>
+                  )}
                 </div>
-                {Object.keys(analysisData).length > 0 ? (
-                  <div className="flex items-end justify-between h-48 pt-4">
-                    {Object.entries(analysisData).map(([cat, amount]) => {
-                      const height = (amount / maxSpending) * 100;
+                <div className="bg-red-50 dark:bg-red-950 rounded-2xl p-4 border border-red-200 dark:border-red-800">
+                  <div className="text-xs text-muted-foreground">Total Expenditure</div>
+                  <div className="text-xl font-bold text-red-600">{formatCurrency(analysisData?.totals?.expenditure || 0)}</div>
+                  {analysisData?.comparison && (
+                    <div className={`text-xs mt-1 ${analysisData.comparison.expenditureChange <= 0 ? 'text-green-500' : 'text-red-500'}`}>
+                      {analysisData.comparison.expenditureChange <= 0 ? '↓' : '↑'} {Math.abs(analysisData.comparison.expenditureChange).toFixed(1)}% vs prev
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Net Flow Card */}
+              <div className={`rounded-2xl p-4 border mb-4 ${(analysisData?.totals?.netFlow || 0) >= 0 ? 'bg-blue-50 dark:bg-blue-950 border-blue-200 dark:border-blue-800' : 'bg-orange-50 dark:bg-orange-950 border-orange-200 dark:border-orange-800'}`}>
+                <div className="flex justify-between items-center">
+                  <div>
+                    <div className="text-xs text-muted-foreground">Net Cash Flow</div>
+                    <div className={`text-2xl font-bold ${(analysisData?.totals?.netFlow || 0) >= 0 ? 'text-blue-600' : 'text-orange-600'}`}>
+                      {formatCurrency(Math.abs(analysisData?.totals?.netFlow || 0))}
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      {(analysisData?.totals?.netFlow || 0) >= 0 ? 'Surplus' : 'Deficit'}
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-xs text-muted-foreground">Savings Rate</div>
+                    <div className="text-lg font-semibold text-purple-600">
+                      {(analysisData?.insights?.savingsRate || 0).toFixed(1)}%
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Key Insights */}
+              <div className="bg-card rounded-2xl p-4 border shadow-sm mb-4">
+                <h3 className="font-semibold mb-3">📈 Key Insights</h3>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="bg-muted rounded-xl p-3">
+                    <div className="text-xs text-muted-foreground">Transactions</div>
+                    <div className="text-lg font-bold">{analysisData?.insights?.transactionCount || 0}</div>
+                  </div>
+                  <div className="bg-muted rounded-xl p-3">
+                    <div className="text-xs text-muted-foreground">Days Tracked</div>
+                    <div className="text-lg font-bold">{analysisData?.insights?.daysInPeriod || 0}</div>
+                  </div>
+                  <div className="bg-muted rounded-xl p-3">
+                    <div className="text-xs text-muted-foreground">Avg Daily Spending</div>
+                    <div className="text-lg font-bold">{formatCurrency(analysisData?.insights?.avgDailyExpenditure || 0, false)}</div>
+                  </div>
+                  <div className="bg-muted rounded-xl p-3">
+                    <div className="text-xs text-muted-foreground">Avg Daily Income</div>
+                    <div className="text-lg font-bold">{formatCurrency(analysisData?.insights?.avgDailyIncome || 0, false)}</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Expenditure Type Breakdown */}
+              {(analysisData?.totals?.expenditure || 0) > 0 && (
+                <div className="bg-card rounded-2xl p-4 border shadow-sm mb-4">
+                  <h3 className="font-semibold mb-3">💼 Expenditure Types</h3>
+                  <div className="space-y-3">
+                    <div>
+                      <div className="flex justify-between text-sm mb-1">
+                        <span>Regular Expenditure</span>
+                        <span>{formatCurrency(analysisData?.totals?.regularExpenditure || 0)}</span>
+                      </div>
+                      <div className="h-2.5 bg-muted rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-blue-500 rounded-full"
+                          style={{ width: `${((analysisData?.totals?.regularExpenditure || 0) / (analysisData?.totals?.expenditure || 1)) * 100}%` }}
+                        />
+                      </div>
+                      <div className="text-xs text-muted-foreground mt-1">
+                        {((analysisData?.totals?.regularExpenditure || 0) / (analysisData?.totals?.expenditure || 1) * 100).toFixed(1)}% of total
+                      </div>
+                    </div>
+                    <div>
+                      <div className="flex justify-between text-sm mb-1">
+                        <span>Capital Expenditure</span>
+                        <span>{formatCurrency(analysisData?.totals?.capitalExpenditure || 0)}</span>
+                      </div>
+                      <div className="h-2.5 bg-muted rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-purple-500 rounded-full"
+                          style={{ width: `${((analysisData?.totals?.capitalExpenditure || 0) / (analysisData?.totals?.expenditure || 1)) * 100}%` }}
+                        />
+                      </div>
+                      <div className="text-xs text-muted-foreground mt-1">
+                        {((analysisData?.totals?.capitalExpenditure || 0) / (analysisData?.totals?.expenditure || 1) * 100).toFixed(1)}% of total
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Category Breakdown */}
+              {analysisData?.categories && analysisData.categories.length > 0 && (
+                <div className="bg-card rounded-2xl p-4 border shadow-sm mb-4">
+                  <h3 className="font-semibold mb-3">📁 Spending by Category</h3>
+                  <div className="space-y-3">
+                    {analysisData.categories.slice(0, 8).map((cat: { category: string; amount: number; percentage: number; count: number }) => (
+                      <div key={cat.category}>
+                        <div className="flex justify-between text-sm mb-1">
+                          <span className="flex items-center gap-2">
+                            <span>{getCategoryIcon(cat.category)}</span>
+                            {escapeHtml(cat.category)}
+                          </span>
+                          <span>{formatCurrency(cat.amount)} ({cat.percentage.toFixed(1)}%)</span>
+                        </div>
+                        <div className="h-2 bg-muted rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-blue-600 rounded-full transition-all"
+                            style={{ width: `${cat.percentage}%` }}
+                          />
+                        </div>
+                        <div className="text-xs text-muted-foreground mt-1">
+                          {cat.count} transaction{cat.count !== 1 ? 's' : ''} • Avg: {formatCurrency(cat.amount / cat.count, false)}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Monthly Trend */}
+              {analysisData?.monthlyTrend && analysisData.monthlyTrend.length > 1 && (
+                <div className="bg-card rounded-2xl p-4 border shadow-sm mb-4">
+                  <h3 className="font-semibold mb-3">📅 Monthly Trend</h3>
+                  <div className="flex items-end justify-between h-32 gap-1">
+                    {analysisData.monthlyTrend.slice(-6).map((m: { month: string; year: number; income: number; expenditure: number }) => {
+                      const maxValue = Math.max(m.income, m.expenditure, 1);
+                      const incomeHeight = (m.income / maxValue) * 100;
+                      const expenseHeight = (m.expenditure / maxValue) * 100;
                       return (
-                        <div key={cat} className="flex flex-col items-center w-[14%]">
-                          <div className="w-full bg-blue-600 rounded-t-lg transition-all min-h-[4px]" style={{ height: `${height}%` }} />
-                          <div className="text-xs text-muted-foreground mt-1 truncate w-full text-center">{cat.slice(0, 4)}</div>
+                        <div key={`${m.month}-${m.year}`} className="flex flex-col items-center flex-1 gap-1">
+                          <div className="flex gap-0.5 h-24 w-full justify-center">
+                            <div
+                              className="w-2 bg-green-500 rounded-t transition-all min-h-[4px]"
+                              style={{ height: `${incomeHeight}%` }}
+                              title={`Income: ${formatCurrency(m.income)}`}
+                            />
+                            <div
+                              className="w-2 bg-red-500 rounded-t transition-all min-h-[4px]"
+                              style={{ height: `${expenseHeight}%` }}
+                              title={`Expenditure: ${formatCurrency(m.expenditure)}`}
+                            />
+                          </div>
+                          <div className="text-[10px] text-muted-foreground truncate w-full text-center">
+                            {m.month.slice(0, 3)}
+                          </div>
                         </div>
                       );
                     })}
                   </div>
-                ) : (
-                  <div className="text-center py-8 text-muted-foreground">No expenditure data</div>
-                )}
-              </div>
+                  <div className="flex justify-center gap-4 mt-2 text-xs">
+                    <span className="flex items-center gap-1"><span className="w-2 h-2 bg-green-500 rounded" /> Income</span>
+                    <span className="flex items-center gap-1"><span className="w-2 h-2 bg-red-500 rounded" /> Expenditure</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Top Spending Days */}
+              {analysisData?.topSpendingDays && analysisData.topSpendingDays.length > 0 && (
+                <div className="bg-card rounded-2xl p-4 border shadow-sm mb-4">
+                  <h3 className="font-semibold mb-3">🔥 Top Spending Days</h3>
+                  <div className="space-y-2">
+                    {analysisData.topSpendingDays.map((d: { date: string; expenditure: number }, i: number) => (
+                      <div key={d.date} className="flex justify-between items-center p-2 bg-muted rounded-lg">
+                        <div className="flex items-center gap-2">
+                          <span className="w-5 h-5 bg-orange-100 dark:bg-orange-900 rounded-full flex items-center justify-center text-xs font-bold text-orange-600">
+                            {i + 1}
+                          </span>
+                          <span className="text-sm">{d.date}</span>
+                        </div>
+                        <span className="font-semibold text-red-500">{formatCurrency(d.expenditure)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Budget Performance */}
+              {analysisData?.budgets && analysisData.budgets.length > 0 && (
+                <div className="bg-card rounded-2xl p-4 border shadow-sm mb-4">
+                  <h3 className="font-semibold mb-3">📋 Budget Performance</h3>
+                  <div className="space-y-3">
+                    {analysisData.budgets.map((b: { category: string; budget: number; spent: number; remaining: number; percentage: number; status: string }) => (
+                      <div key={b.category}>
+                        <div className="flex justify-between text-sm mb-1">
+                          <span>{escapeHtml(b.category)}</span>
+                          <span>{formatCurrency(b.spent)} / {formatCurrency(b.budget)}</span>
+                        </div>
+                        <div className="h-2.5 bg-muted rounded-full overflow-hidden">
+                          <div
+                            className={`h-full rounded-full transition-all ${
+                              b.status === 'over' ? 'bg-red-500' : b.status === 'warning' ? 'bg-orange-500' : 'bg-green-500'
+                            }`}
+                            style={{ width: `${Math.min(b.percentage, 100)}%` }}
+                          />
+                        </div>
+                        <div className={`text-xs mt-1 ${b.remaining < 0 ? 'text-red-500' : 'text-muted-foreground'}`}>
+                          {b.remaining >= 0 ? `${formatCurrency(b.remaining)} remaining` : `${formatCurrency(Math.abs(b.remaining))} over budget`}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Loans Summary */}
+              {(analysisData?.loans?.activeCount || 0) > 0 && (
+                <div className="bg-orange-50 dark:bg-orange-950 rounded-2xl p-4 border border-orange-200 dark:border-orange-800 mb-4">
+                  <h3 className="font-semibold mb-3 text-orange-700 dark:text-orange-300">💸 Loans Summary</h3>
+                  <div className="grid grid-cols-3 gap-3 text-center">
+                    <div>
+                      <div className="text-lg font-bold text-orange-600">{formatCurrency(analysisData?.loans?.totalOutstanding || 0)}</div>
+                      <div className="text-xs text-muted-foreground">Outstanding</div>
+                    </div>
+                    <div>
+                      <div className="text-lg font-bold text-green-600">{formatCurrency(analysisData?.loans?.totalRepaid || 0)}</div>
+                      <div className="text-xs text-muted-foreground">Repaid</div>
+                    </div>
+                    <div>
+                      <div className="text-lg font-bold text-blue-600">{analysisData?.loans?.activeCount || 0}</div>
+                      <div className="text-xs text-muted-foreground">Active</div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Savings Goals Progress */}
+              {(analysisData?.savings?.goals || []).length > 0 && (
+                <div className="bg-purple-50 dark:bg-purple-950 rounded-2xl p-4 border border-purple-200 dark:border-purple-800">
+                  <h3 className="font-semibold mb-3 text-purple-700 dark:text-purple-300">🎯 Savings Progress</h3>
+                  <div className="text-sm text-muted-foreground mb-2">Total Saved: {formatCurrency(analysisData?.savings?.total || 0)}</div>
+                  <div className="space-y-2">
+                    {analysisData.savings.goals.map((g: { name: string; current: number; target: number; percentage: number }) => (
+                      <div key={g.name}>
+                        <div className="flex justify-between text-sm mb-1">
+                          <span>{escapeHtml(g.name)}</span>
+                          <span>{g.percentage.toFixed(0)}%</span>
+                        </div>
+                        <div className="h-2 bg-muted rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-purple-500 rounded-full"
+                            style={{ width: `${Math.min(g.percentage, 100)}%` }}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Settings View */}
+          {view === 'settings' && (
+            <div className="animate-fadeIn">
+              <h2 className="text-lg font-bold mb-3">⚙️ Settings</h2>
 
               <div className="bg-card rounded-2xl p-4 border shadow-sm">
-                <h3 className="font-semibold mb-3">Settings</h3>
                 <div className="space-y-3">
                   <div>
                     <label className="text-xs text-muted-foreground mb-1 block">Currency</label>
@@ -1473,7 +1715,16 @@ export default function BudgetApp() {
                       {CURRENCIES.map((c) => (<option key={c.code} value={c.code}>{c.code} ({c.symbol})</option>))}
                     </select>
                   </div>
-                  
+
+                  <button
+                    onClick={() => updateSettings.mutate({ theme: settings?.theme === 'dark' ? 'light' : 'dark' })}
+                    className="w-full flex items-center justify-center gap-2 p-3 rounded-xl bg-muted border font-semibold"
+                  >
+                    {settings?.theme === 'dark' ? '☀️ Light Mode' : '🌙 Dark Mode'}
+                  </button>
+
+                  <InstallButton />
+
                   {/* Security Section */}
                   <div className="pt-2 border-t">
                     <label className="text-xs text-muted-foreground mb-2 block">Security</label>
@@ -1491,7 +1742,7 @@ export default function BudgetApp() {
                         onClick={async () => {
                           if (hasPinSet) {
                             if (confirm('Remove PIN lock? This will also disable biometric login.')) {
-                              setPinVerified(false); // Log user out
+                              setPinVerified(false);
                               updateSettings.mutate({ pin: null, biometricEnabled: false });
                             }
                           } else {
@@ -1499,16 +1750,16 @@ export default function BudgetApp() {
                           }
                         }}
                         className={`px-3 py-1.5 rounded-lg text-sm font-semibold ${
-                          hasPinSet 
-                            ? 'bg-red-100 text-red-600 hover:bg-red-200' 
+                          hasPinSet
+                            ? 'bg-red-100 text-red-600 hover:bg-red-200'
                             : 'bg-blue-600 text-white hover:bg-blue-700'
                         }`}
                       >
                         {hasPinSet ? 'Remove' : 'Set PIN'}
                       </button>
                     </div>
-                    
-                    {/* Biometric Toggle - only show if PIN is set */}
+
+                    {/* Biometric Toggle */}
                     {hasPinSet && (
                       <div className="flex items-center justify-between p-3 bg-muted rounded-xl mt-2">
                         <div className="flex items-center gap-2">
@@ -1538,7 +1789,7 @@ export default function BudgetApp() {
                       </div>
                     )}
 
-                    {/* Logout Button - only show if PIN is set and logged in */}
+                    {/* Logout Button */}
                     {hasPinSet && pinVerified && (
                       <button
                         onClick={handleLogout}
@@ -2016,20 +2267,16 @@ export default function BudgetApp() {
             <svg className="w-6 h-6" viewBox="0 0 24 24" fill="currentColor"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
             <span className="text-xs">List</span>
           </button>
-          <button onClick={() => setView('budgets')} className={`flex flex-col items-center gap-0.5 ${view === 'budgets' ? 'text-blue-600' : 'text-muted-foreground'}`}>
-            <svg className="w-6 h-6" viewBox="0 0 24 24" fill="currentColor"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM9 17H7v-7h2v7zm4 0h-2V7h2v10zm4 0h-2v-4h2v4z"/></svg>
-            <span className="text-xs">Budget</span>
-          </button>
           <button onClick={() => { resetTxForm(); setView('add'); }} className="w-14 h-14 bg-blue-600 rounded-full flex items-center justify-center text-white shadow-lg -translate-y-5 border-4 border-background">
             <svg className="w-7 h-7" viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
           </button>
-          <button onClick={() => setView('goals')} className={`flex flex-col items-center gap-0.5 ${view === 'goals' ? 'text-blue-600' : 'text-muted-foreground'}`}>
-            <svg className="w-6 h-6" viewBox="0 0 24 24" fill="currentColor"><path d="M16 6l2.29 2.29-4.88 4.88-4-4L2 12.59 3.41 14l6 6 10-10z"/></svg>
-            <span className="text-xs">Goals</span>
+          <button onClick={() => setView('analysis')} className={`flex flex-col items-center gap-0.5 ${view === 'analysis' ? 'text-blue-600' : 'text-muted-foreground'}`}>
+            <svg className="w-6 h-6" viewBox="0 0 24 24" fill="currentColor"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM9 17H7v-7h2v7zm4 0h-2V7h2v10zm4 0h-2v-4h2v4z"/></svg>
+            <span className="text-xs">Analysis</span>
           </button>
           <button onClick={() => setView('settings')} className={`flex flex-col items-center gap-0.5 ${view === 'settings' ? 'text-blue-600' : 'text-muted-foreground'}`}>
             <svg className="w-6 h-6" viewBox="0 0 24 24" fill="currentColor"><path d="M19.14 12.94c.04-.31.06-.63.06-.94 0-.31-.02-.63-.06-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
-            <span className="text-xs">More</span>
+            <span className="text-xs">Settings</span>
           </button>
         </nav>
 
