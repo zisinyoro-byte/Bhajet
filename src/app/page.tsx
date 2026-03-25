@@ -12,6 +12,7 @@ import {
   getPeriodShortName, 
   getPeriodDisplayName,
   getPeriodDates,
+  getPeriodForDate,
   PERIOD_NAMES 
 } from '@/lib/periods';
 import { PeriodSelector, PeriodNavigation } from '@/components/PeriodSelector';
@@ -193,6 +194,8 @@ export default function BudgetApp() {
   const [searchQuery, setSearchQuery] = useState('');
   const [analysisPeriod, setAnalysisPeriod] = useState('all');
   const [comparePeriodKey, setComparePeriodKey] = useState<string | null>(null);
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [groupMode, setGroupMode] = useState<'date' | 'category' | 'period' | 'none'>('date');
   const [pin, setPin] = useState('');
   const [pinVerified, setPinVerified] = useState(false);
   const [pinError, setPinError] = useState('');
@@ -681,6 +684,100 @@ export default function BudgetApp() {
     return cat?.icon || DEFAULT_ICONS[name] || '📄';
   }, [categories]);
 
+  // Toggle group expansion
+  const toggleGroup = useCallback((groupKey: string) => {
+    setExpandedGroups(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(groupKey)) {
+        newSet.delete(groupKey);
+      } else {
+        newSet.add(groupKey);
+      }
+      return newSet;
+    });
+  }, []);
+
+  // Expand all groups
+  const expandAllGroups = useCallback(() => {
+    const allKeys = new Set<string>();
+    if (groupMode === 'date') {
+      filteredTransactions.forEach(tx => allKeys.add(tx.date));
+    } else if (groupMode === 'category') {
+      filteredTransactions.forEach(tx => allKeys.add(tx.category));
+    } else if (groupMode === 'period') {
+      filteredTransactions.forEach(tx => {
+        const periodNum = getPeriodForDate(new Date(tx.date));
+        const year = new Date(tx.date).getFullYear();
+        allKeys.add(`${year}-P${periodNum}`);
+      });
+    }
+    setExpandedGroups(allKeys);
+  }, [filteredTransactions, groupMode]);
+
+  // Collapse all groups
+  const collapseAllGroups = useCallback(() => {
+    setExpandedGroups(new Set());
+  }, []);
+
+  // Group transactions
+  const groupedTransactions = useMemo(() => {
+    if (groupMode === 'none') {
+      return [{ key: 'all', label: 'All Transactions', transactions: filteredTransactions, income: 0, expenditure: 0 }];
+    }
+
+    const groups: Record<string, { transactions: Transaction[]; income: number; expenditure: number; label: string }> = {};
+
+    filteredTransactions.forEach(tx => {
+      let key: string;
+      let label: string;
+
+      if (groupMode === 'date') {
+        key = tx.date;
+        label = new Date(tx.date).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+      } else if (groupMode === 'category') {
+        key = tx.category;
+        label = tx.category;
+      } else if (groupMode === 'period') {
+        const periodNum = getPeriodForDate(new Date(tx.date));
+        const year = new Date(tx.date).getFullYear();
+        key = `${year}-P${periodNum}`;
+        label = getPeriodDisplayName(periodNum, year);
+      } else {
+        key = 'all';
+        label = 'All';
+      }
+
+      if (!groups[key]) {
+        groups[key] = { transactions: [], income: 0, expenditure: 0, label };
+      }
+      groups[key].transactions.push(tx);
+      if (tx.type === 'income') {
+        groups[key].income += tx.amount;
+      } else {
+        groups[key].expenditure += tx.amount;
+      }
+    });
+
+    // Sort groups - by date descending for date mode
+    let sortedGroups = Object.entries(groups).map(([key, data]) => ({
+      key,
+      label: data.label,
+      transactions: data.transactions,
+      income: data.income,
+      expenditure: data.expenditure,
+    }));
+
+    if (groupMode === 'date') {
+      sortedGroups.sort((a, b) => new Date(b.key).getTime() - new Date(a.key).getTime());
+    } else if (groupMode === 'period') {
+      sortedGroups.sort((a, b) => b.key.localeCompare(a.key));
+    } else if (groupMode === 'category') {
+      sortedGroups.sort((a, b) => b.expenditure - a.expenditure);
+    }
+
+    return sortedGroups;
+  }, [filteredTransactions, groupMode]);
+
   // Helpers
   const handleEditTx = useCallback((tx: Transaction) => {
     setEditTx(tx);
@@ -1113,6 +1210,48 @@ export default function BudgetApp() {
                   Recurring
                 </button>
               </div>
+              
+              {/* Group Mode Selector */}
+              <div className="flex gap-2 mb-3">
+                <select
+                  value={groupMode}
+                  onChange={(e) => {
+                    setGroupMode(e.target.value as 'date' | 'category' | 'period' | 'none');
+                    setExpandedGroups(new Set());
+                  }}
+                  className="flex-1 p-2.5 rounded-xl bg-card border outline-none text-sm"
+                >
+                  <option value="date">Group by Date</option>
+                  <option value="category">Group by Category</option>
+                  <option value="period">Group by Period</option>
+                  <option value="none">No Grouping</option>
+                </select>
+                {groupMode !== 'none' && (
+                  <div className="flex gap-1">
+                    <button
+                      onClick={expandAllGroups}
+                      className="p-2 rounded-xl bg-card border text-xs text-blue-600"
+                      title="Expand all"
+                    >
+                      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <polyline points="7,13 12,18 17,13"/>
+                        <polyline points="7,6 12,11 17,6"/>
+                      </svg>
+                    </button>
+                    <button
+                      onClick={collapseAllGroups}
+                      className="p-2 rounded-xl bg-card border text-xs text-blue-600"
+                      title="Collapse all"
+                    >
+                      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <polyline points="17,11 12,6 7,11"/>
+                        <polyline points="17,18 12,13 7,18"/>
+                      </svg>
+                    </button>
+                  </div>
+                )}
+              </div>
+              
               <input
                 type="text"
                 placeholder="Search..."
@@ -1120,42 +1259,86 @@ export default function BudgetApp() {
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="w-full p-3 rounded-xl bg-card border mb-3 outline-none focus:ring-2 focus:ring-blue-500"
               />
-              <div className="bg-card rounded-2xl p-3 border shadow-sm">
-                {transactions.length === 0 ? (
-                  <div className="text-center py-8 text-muted-foreground">No transactions</div>
-                ) : (
-                  <ul className="divide-y divide-border">
-                    {filteredTransactions.map((tx) => (
-                      <li key={tx.id} className="flex items-center gap-3 py-3">
-                        <div className="w-10 h-10 rounded-xl bg-blue-100 dark:bg-blue-900 flex items-center justify-center text-lg">
-                          {getCategoryIcon(tx.category)}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="font-semibold truncate">{escapeHtml(tx.category)}</div>
-                          <div className="text-xs text-muted-foreground truncate">
-                            {tx.date} {tx.note && `• ${escapeHtml(tx.note)}`}
+              
+              {transactions.length === 0 ? (
+                <div className="bg-card rounded-2xl p-8 text-center border shadow-sm">
+                  <div className="text-muted-foreground">No transactions</div>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {groupedTransactions.map((group) => (
+                    <div key={group.key} className="bg-card rounded-2xl border shadow-sm overflow-hidden">
+                      {/* Group Header */}
+                      <button
+                        onClick={() => groupMode !== 'none' && toggleGroup(group.key)}
+                        className={`w-full p-3 flex items-center justify-between ${groupMode !== 'none' ? 'hover:bg-muted/50' : ''}`}
+                      >
+                        <div className="flex items-center gap-3">
+                          {groupMode !== 'none' && (
+                            <svg 
+                              className={`w-4 h-4 text-muted-foreground transition-transform ${expandedGroups.has(group.key) ? 'rotate-180' : ''}`} 
+                              viewBox="0 0 24 24" 
+                              fill="none" 
+                              stroke="currentColor" 
+                              strokeWidth="2"
+                            >
+                              <polyline points="6,9 12,15 18,9"/>
+                            </svg>
+                          )}
+                          <div className="text-left">
+                            <div className="font-semibold text-sm">{group.label}</div>
+                            <div className="text-xs text-muted-foreground">
+                              {group.transactions.length} transaction{group.transactions.length !== 1 ? 's' : ''}
+                            </div>
                           </div>
                         </div>
-                        <div className={`font-bold ${tx.type === 'income' ? 'text-green-500' : 'text-red-500'}`}>
-                          {tx.type === 'income' ? '+' : '-'}{formatCurrency(tx.amount, false)}
+                        <div className="flex items-center gap-3 text-sm">
+                          {group.income > 0 && (
+                            <span className="text-green-600 font-medium">+{formatCurrency(group.income, false)}</span>
+                          )}
+                          {group.expenditure > 0 && (
+                            <span className="text-red-600 font-medium">-{formatCurrency(group.expenditure, false)}</span>
+                          )}
                         </div>
-                        <div className="flex flex-col gap-2">
-                          <button onClick={() => handleEditTx(tx)} className="text-muted-foreground hover:text-primary">
-                            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
-                              <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
-                            </svg>
-                          </button>
-                          <button onClick={() => deleteTransaction.mutate(tx.id)} className="text-muted-foreground hover:text-red-500">
-                            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
-                              <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
-                            </svg>
-                          </button>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
+                      </button>
+                      
+                      {/* Group Content */}
+                      {(groupMode === 'none' || expandedGroups.has(group.key)) && (
+                        <ul className="border-t divide-y divide-border">
+                          {group.transactions.map((tx) => (
+                            <li key={tx.id} className="flex items-center gap-3 p-3 pl-10">
+                              <div className="w-10 h-10 rounded-xl bg-blue-100 dark:bg-blue-900 flex items-center justify-center text-lg">
+                                {getCategoryIcon(tx.category)}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="font-semibold truncate">{escapeHtml(tx.category)}</div>
+                                <div className="text-xs text-muted-foreground truncate">
+                                  {tx.date} {tx.note && `• ${escapeHtml(tx.note)}`}
+                                </div>
+                              </div>
+                              <div className={`font-bold ${tx.type === 'income' ? 'text-green-500' : 'text-red-500'}`}>
+                                {tx.type === 'income' ? '+' : '-'}{formatCurrency(tx.amount, false)}
+                              </div>
+                              <div className="flex flex-col gap-2">
+                                <button onClick={() => handleEditTx(tx)} className="text-muted-foreground hover:text-primary">
+                                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+                                    <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
+                                  </svg>
+                                </button>
+                                <button onClick={() => deleteTransaction.mutate(tx.id)} className="text-muted-foreground hover:text-red-500">
+                                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+                                    <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
+                                  </svg>
+                                </button>
+                              </div>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
