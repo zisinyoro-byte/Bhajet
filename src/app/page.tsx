@@ -6,6 +6,8 @@ import { InstallButton } from '@/components/PWARegister';
 import { AuthScreen } from '@/components/AuthScreen';
 import { NotificationManager, requestNotificationPermission } from '@/components/Notifications';
 import { GamificationPanel, ChallengesView, AchievementsView, useGamification } from '@/components/Gamification';
+import { BiometricQuickView, useQuickViewAvailable } from '@/components/BiometricQuickView';
+import { PullToRefresh } from '@/components/PullToRefresh';
 import { 
   getCurrentPeriod, 
   getPeriodKey, 
@@ -16,6 +18,8 @@ import {
   PERIOD_NAMES 
 } from '@/lib/periods';
 import { PeriodSelector, PeriodNavigation } from '@/components/PeriodSelector';
+import { haptics } from '@/lib/haptics';
+import { isOnline, cacheData, getCachedData, addToSyncQueue } from '@/lib/offline';
 
 // Types
 interface Transaction {
@@ -239,6 +243,13 @@ export default function BudgetApp() {
   });
   const [repaymentForm, setRepaymentForm] = useState({ amount: '', date: new Date().toISOString().split('T')[0], note: '' });
   const [activeLoanId, setActiveLoanId] = useState<string | null>(null);
+  
+  // New feature states
+  const [showQuickView, setShowQuickView] = useState(false);
+  const [isOffline, setIsOffline] = useState(false);
+  const [budgetSuggestions, setBudgetSuggestions] = useState<unknown[] | null>(null);
+  const [loadingSuggestions, setLoadingSuggestions] = useState(false);
+  const [showBudgetSuggestions, setShowBudgetSuggestions] = useState(false);
 
   // AI Categorization function
   const aiCategorize = useCallback(async (description: string) => {
@@ -358,6 +369,7 @@ export default function BudgetApp() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['transactions'] });
       queryClient.invalidateQueries({ queryKey: ['summary'] });
+      haptics.success();
       showToast('Transaction saved');
       resetTxForm();
       setView('dashboard');
@@ -370,6 +382,7 @@ export default function BudgetApp() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['transactions'] });
       queryClient.invalidateQueries({ queryKey: ['summary'] });
+      haptics.success();
       showToast('Transaction updated');
       resetTxForm();
       setView('dashboard');
@@ -381,6 +394,7 @@ export default function BudgetApp() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['transactions'] });
       queryClient.invalidateQueries({ queryKey: ['summary'] });
+      haptics.delete();
       showToast('Transaction deleted');
     },
   });
@@ -391,6 +405,7 @@ export default function BudgetApp() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['budgets'] });
       queryClient.invalidateQueries({ queryKey: ['summary'] });
+      haptics.success();
       showToast('Budget saved');
       setBudgetForm({ category: '', limit: '' });
     },
@@ -401,6 +416,7 @@ export default function BudgetApp() {
       postData<Goal>('/api/goals', data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['goals'] });
+      haptics.success();
       showToast('Goal created');
       setGoalForm({ name: '', target: '' });
       setShowModal(null);
@@ -413,6 +429,7 @@ export default function BudgetApp() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['goals'] });
       queryClient.invalidateQueries({ queryKey: ['summary'] });
+      haptics.success();
       showToast('Deposit successful');
     },
   });
@@ -579,7 +596,42 @@ export default function BudgetApp() {
         localStorage.removeItem('budget_session');
       }
     }
+
+    // Online/offline detection
+    const handleOnline = () => setIsOffline(false);
+    const handleOffline = () => setIsOffline(true);
+    
+    setIsOffline(!navigator.onLine);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
   }, []);
+
+  // Fetch budget suggestions
+  const fetchBudgetSuggestions = useCallback(async () => {
+    setLoadingSuggestions(true);
+    try {
+      const res = await fetch('/api/budgets/suggest?periods=6');
+      if (res.ok) {
+        const data = await res.json();
+        setBudgetSuggestions(data);
+      }
+    } catch (e) {
+      console.error('Failed to fetch suggestions:', e);
+    }
+    setLoadingSuggestions(false);
+  }, []);
+
+  // Show budget suggestions when on budgets view
+  useEffect(() => {
+    if (view === 'budgets' && !budgetSuggestions) {
+      fetchBudgetSuggestions();
+    }
+  }, [view, budgetSuggestions, fetchBudgetSuggestions]);
 
   // Logout function
   const handleLogout = useCallback(() => {
@@ -986,6 +1038,15 @@ export default function BudgetApp() {
               Techmari Budget
             </div>
             <div className="flex items-center gap-2">
+              {/* Offline indicator */}
+              {isOffline && (
+                <div className="flex items-center gap-1 px-2 py-1 bg-orange-500 text-white text-xs rounded-full animate-pulse">
+                  <svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+                    <path d="M12 3a9 9 9" />
+                  </svg>
+                  <span className="text-xs font-medium">Offline</span>
+                </div>
+              )}
               <PeriodSelector 
                 selectedPeriod={currentPeriod} 
                 onPeriodChange={setCurrentPeriod}
@@ -1376,6 +1437,88 @@ export default function BudgetApp() {
                   })
                 ) : (
                   <div className="text-center py-6 text-muted-foreground">No budgets set for this period</div>
+                )}
+              </div>
+
+              {/* Smart Budget Suggestions */}
+              <div className="bg-gradient-to-r from-purple-50 to-blue-50 dark:from-purple-950 dark:to-blue-950 rounded-2xl p-4 border border-purple-200 dark:border-purple-800 mb-4">
+                <div className="flex justify-between items-center mb-3">
+                  <h3 className="font-semibold flex items-center gap-2">
+                    <span className="text-lg">🤖</span>
+                    Smart Budget Suggestions
+                  </h3>
+                  <button
+                    onClick={() => setShowBudgetSuggestions(!showBudgetSuggestions)}
+                    className="text-xs text-purple-600 dark:text-purple-400 font-medium"
+                  >
+                    {showBudgetSuggestions ? 'Hide' : 'Show'}
+                  </button>
+                </div>
+                
+                {showBudgetSuggestions && (
+                  <div className="space-y-3">
+                    {loadingSuggestions ? (
+                      <div className="flex items-center justify-center py-4">
+                        <div className="animate-spin w-5 h-5 border-2 border-purple-600 border-t-transparent rounded-full" />
+                        <span className="ml-2 text-sm text-muted-foreground">Analyzing spending patterns...</span>
+                      </div>
+                    ) : budgetSuggestions ? (
+                      <>
+                        {(budgetSuggestions as { suggestions: unknown[] }).suggestions?.slice(0, 5).map((suggestion, index) => {
+                          const s = suggestion as {
+                            category: string;
+                            suggestedLimit: number;
+                            avgSpending: number;
+                            currentBudget: number | null;
+                            recommendation: string;
+                            confidence: number;
+                            reasoning: string;
+                            trend: string;
+                          };
+                          return (
+                            <div key={s.category} className="bg-white/50 dark:bg-black/20 rounded-xl p-3">
+                              <div className="flex justify-between items-start mb-2">
+                                <div>
+                                  <div className="font-medium text-sm">{s.category}</div>
+                                  <div className="text-xs text-muted-foreground">
+                                    Avg: {formatCurrency(s.avgSpending)} • {s.trend === 'increasing' ? '📈' : s.trend === 'decreasing' ? '📉' : '➡️'} {s.trend}
+                                  </div>
+                                </div>
+                                <div className="text-right">
+                                  <div className="font-bold text-purple-600">{formatCurrency(s.suggestedLimit)}</div>
+                                  <div className="text-xs text-muted-foreground">suggested</div>
+                                </div>
+                              </div>
+                              <div className="flex gap-2">
+                                <button
+                                  onClick={() => {
+                                    haptics.buttonPress();
+                                    addBudget.mutate({
+                                      category: s.category,
+                                      month: currentPeriod.key,
+                                      limit: s.suggestedLimit,
+                                    });
+                                  }}
+                                  className="flex-1 text-xs py-1.5 bg-purple-600 text-white rounded-lg font-medium"
+                                >
+                                  {s.recommendation === 'create' ? 'Create Budget' : s.recommendation === 'increase' ? 'Increase' : s.recommendation === 'decrease' ? 'Decrease' : 'Apply'}
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                        {(budgetSuggestions as { insights: { budgetToIncomeRatio: number } }).insights && (
+                          <div className="text-xs text-muted-foreground p-2 bg-white/30 dark:bg-black/10 rounded-lg">
+                            💡 Total suggested budget is {((budgetSuggestions as { insights: { budgetToIncomeRatio: number } }).insights.budgetToIncomeRatio).toFixed(0)}% of your average income
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <div className="text-center py-4 text-muted-foreground text-sm">
+                        Add more transactions to get smart suggestions
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
 
